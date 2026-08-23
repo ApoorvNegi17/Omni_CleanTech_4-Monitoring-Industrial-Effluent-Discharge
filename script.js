@@ -15,6 +15,11 @@ let simulationInterval;
 let activeAlerts = 0;
 let riskScore = 32;
 
+// --- WEBSOCKET STATE ---
+let ws = null;
+let isOffline = true;
+let reconnectTimeout = null;
+
 // Chart History Data
 const MAX_HISTORY = 20;
 let chartHistory = {
@@ -27,17 +32,10 @@ let chartHistory = {
 };
 
 // Incidents Data
-let incidents = [
-    { id: "INC-001", facility: "Plant A", location: "Upstream Zone", time: "09:15", issue: "Minor pH Fluctuation", risk: "Medium", status: "Resolved", action: "Investigate" },
-    { id: "INC-002", facility: "Plant B", location: "River Point 2", time: "13:47", issue: "Conductivity Spike", risk: "Medium", status: "Investigating", action: "Investigate" }
-];
+let incidents = [];
 
 // Monitoring Points (Map)
-const mapPoints = [
-    { id: 1, name: "Discharge Point Alpha", lat: 51.505, lng: -0.09, status: 'safe', ph: 7.2, turb: 14, tds: 420, risk: 20 },
-    { id: 2, name: "Monitoring Station 1", lat: 51.503, lng: -0.08, status: 'safe', ph: 7.1, turb: 12, tds: 410, risk: 15 },
-    { id: 3, name: "Downstream Community", lat: 51.501, lng: -0.07, status: 'safe', ph: 7.3, turb: 10, tds: 400, risk: 10 }
-];
+let mapPoints = [];
 
 // --- DOM ELEMENTS ---
 const sensorCardsContainer = document.getElementById('sensor-cards');
@@ -76,9 +74,11 @@ document.addEventListener('DOMContentLoaded', () => {
     initSensors();
     initChart();
     initMap();
-    renderIncidents();
-    renderReports();
-    startSimulation();
+    fetchDashboardSummary();
+    fetchMapPoints();
+    fetchIncidents();
+    fetchReports();
+    initWebSocket(); // Try to connect WebSocket
     
     // Event Listeners
     document.getElementById('simulate-anomaly-btn').addEventListener('click', triggerAnomaly);
@@ -105,6 +105,76 @@ document.addEventListener('DOMContentLoaded', () => {
     // Print
     document.getElementById('generate-report-btn').addEventListener('click', generatePrintableReport);
 });
+
+// --- API FETCHERS ---
+async function fetchDashboardSummary() {
+    try {
+        const res = await fetch('http://localhost:8000/api/dashboard/summary');
+        if (!res.ok) throw new Error('Network response was not ok');
+        const data = await res.json();
+        
+        document.querySelector('.dashboard-grid .stat-card:nth-child(1) .stat-value').innerText = data.monitoring_points < 10 ? '0' + data.monitoring_points : data.monitoring_points;
+        activeAlertsCount.innerText = data.active_alerts;
+        document.getElementById('safe-facilities-count').innerText = data.safe_facilities < 10 ? '0' + data.safe_facilities : data.safe_facilities;
+        overallRiskVal.innerText = data.overall_risk;
+        
+        // Ensure hero status matches
+        if (data.overall_risk >= 80) {
+            heroStatus.className = 'system-status badge-critical';
+            heroStatus.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> CRITICAL ALERT';
+        } else {
+            heroStatus.className = 'system-status badge-safe';
+            heroStatus.innerHTML = '<i class="fa-solid fa-check-circle"></i> SYSTEM OPERATIONAL';
+        }
+    } catch (e) {
+        console.error("Dashboard fetch failed:", e);
+    }
+}
+
+async function fetchMapPoints() {
+    try {
+        const res = await fetch('http://localhost:8000/api/map/points');
+        if (!res.ok) throw new Error('Network response was not ok');
+        mapPoints = await res.json();
+        updateMapMarkers();
+    } catch (e) {
+        console.error("Map fetch failed:", e);
+    }
+}
+
+async function fetchIncidents() {
+    try {
+        const res = await fetch('http://localhost:8000/api/incidents');
+        if (!res.ok) throw new Error('Network response was not ok');
+        const data = await res.json();
+        // Map backend incident to frontend structure
+        incidents = data.map(inc => ({
+            db_id: inc.id, // backend DB ID needed for details and reports
+            id: inc.incident_code,
+            facility: "Facility " + inc.facility_id,
+            location: "Point " + inc.monitoring_point_id,
+            time: new Date(inc.detected_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+            issue: inc.issue,
+            risk: inc.risk_level,
+            status: inc.status,
+            action: "Investigate"
+        }));
+        renderIncidents();
+    } catch (e) {
+        console.error("Incidents fetch failed:", e);
+    }
+}
+
+async function fetchReports() {
+    try {
+        const res = await fetch('http://localhost:8000/api/reports');
+        if (!res.ok) throw new Error('Network response was not ok');
+        const data = await res.json();
+        renderReports(data);
+    } catch (e) {
+        console.error("Reports fetch failed:", e);
+    }
+}
 
 
 // --- NAVIGATION ---
@@ -181,7 +251,189 @@ function updateSensorsUI() {
 }
 
 
-// --- SIMULATION LOOP ---
+// --- WEBSOCKET CONNECTION ---
+function initWebSocket() {
+    if (ws) {
+        ws.close();
+    }
+    
+    const wsUrl = `ws://localhost:8000/ws/sensors`;
+    try {
+        ws = new WebSocket(wsUrl);
+    } catch(e) {
+        handleDisconnect();
+        return;
+    }
+
+    ws.onopen = () => {
+        isOffline = false;
+        updateConnectionStatus(true);
+        // Stop local simulation if backend is live
+        if (simulationInterval) {
+            clearInterval(simulationInterval);
+            simulationInterval = null;
+        }
+        showToast("Connected to live server", "info");
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === "sensor_update") {
+            handleSensorUpdate(data);
+        } else if (data.type === "incident") {
+            handleIncidentEvent(data);
+        } else if (data.type === "incident_resolved") {
+            handleIncidentResolvedEvent(data);
+        }
+    };
+
+    ws.onclose = () => {
+        handleDisconnect();
+    };
+
+    ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        handleDisconnect();
+    };
+}
+
+function handleDisconnect() {
+    if (isOffline) return; // already handling
+    isOffline = true;
+    updateConnectionStatus(false);
+    showToast("Connection lost. Falling back to local demo mode.", "warning");
+    
+    // Restart local simulation loop as fallback
+    startSimulation();
+    
+    // Try reconnecting
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = setTimeout(() => {
+        initWebSocket();
+    }, 5000);
+}
+
+function updateConnectionStatus(isLive) {
+    const statusEl = document.getElementById("connection-status");
+    if (!statusEl) return;
+    
+    const dot = statusEl.querySelector('.status-dot');
+    const text = statusEl.querySelector('.status-text');
+    
+    if (isLive) {
+        statusEl.className = "connection-status live";
+        dot.style.color = "#10b981"; // green
+        text.style.color = "#10b981";
+        text.innerText = "LIVE";
+    } else {
+        statusEl.className = "connection-status offline";
+        dot.style.color = "#ef4444"; // red
+        text.style.color = "#ef4444";
+        text.innerText = "OFFLINE";
+    }
+}
+
+function handleSensorUpdate(data) {
+    // Override local data with backend data
+    // (Assume monitoring_point_id=1 is the main display for simplicity)
+    if (data.monitoring_point_id === 1) {
+        currentData.ph = data.ph;
+        currentData.turbidity = data.turbidity;
+        currentData.temperature = data.temperature;
+        currentData.tds = data.tds;
+        currentData.flow = data.flow_rate;
+        
+        isAnomaly = data.risk_level === 'HIGH' || data.risk_level === 'CRITICAL';
+        riskScore = data.risk_score;
+        
+        let type = 'safe';
+        if (data.risk_level === 'MEDIUM') type = 'warning';
+        if (data.risk_level === 'HIGH' || data.risk_level === 'CRITICAL') type = 'critical';
+        updateRiskUI(`${data.risk_level} RISK`, type);
+        
+        // Update AI Fingerprint basic UI mapping
+        if (isAnomaly) {
+            aiBehaviour.innerText = 'ABNORMAL';
+            aiBehaviour.className = 'value text-red';
+            aiFingerprint.innerText = 'Server detected anomaly';
+            aiFingerprint.className = 'value text-red';
+        } else {
+            aiBehaviour.innerText = 'NORMAL';
+            aiBehaviour.className = 'value text-green';
+            aiFingerprint.innerText = 'No significant deviation detected';
+            aiFingerprint.className = 'value';
+        }
+        
+        updateChartHistory();
+        updateSensorsUI();
+        updateChartDisplay();
+        renderSensors();
+    }
+    
+    // Update map status
+    const mapPt = mapPoints.find(p => p.id === data.monitoring_point_id);
+    if (mapPt) {
+        if (!mapPt.latest_readings) mapPt.latest_readings = {};
+        mapPt.latest_readings.ph = data.ph;
+        mapPt.latest_readings.turbidity = data.turbidity;
+        mapPt.risk_score = data.risk_score;
+        mapPt.status = (data.risk_level === 'CRITICAL' || data.risk_level === 'HIGH') ? 'critical' : (data.risk_level === 'MEDIUM' ? 'warning' : 'safe');
+        updateMapMarkers();
+    }
+}
+
+function handleIncidentEvent(data) {
+    const newIncident = {
+        id: data.incident_code,
+        facility: "Facility " + data.monitoring_point_id, // simplistic mapping
+        location: "Point " + data.monitoring_point_id,
+        time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+        issue: data.issue,
+        risk: data.risk_level,
+        status: "Open",
+        action: "Investigate"
+    };
+    
+    // Prevent exact duplicates
+    if (!incidents.find(i => i.id === data.incident_code)) {
+        incidents.unshift(newIncident);
+        renderIncidents();
+        renderReports();
+        
+        activeAlerts = incidents.filter(i => i.status !== 'Resolved').length;
+        activeAlertsCount.innerText = activeAlerts;
+        
+        heroStatus.className = 'system-status badge-critical';
+        heroStatus.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> CRITICAL ALERT';
+        recommendedActions.classList.remove('hidden');
+        
+        showToast(`New Incident [${data.incident_code}]: ${data.issue}`, 'critical');
+    }
+}
+
+function handleIncidentResolvedEvent(data) {
+    const inc = incidents.find(i => i.id === data.incident_code);
+    if (inc) {
+        inc.status = 'Resolved';
+        renderIncidents();
+        renderReports();
+        
+        activeAlerts = incidents.filter(i => i.status !== 'Resolved').length;
+        activeAlertsCount.innerText = activeAlerts;
+        
+        if (activeAlerts === 0) {
+            heroStatus.className = 'system-status badge-safe';
+            heroStatus.innerHTML = '<i class="fa-solid fa-check-circle"></i> SYSTEM OPERATIONAL';
+            recommendedActions.classList.add('hidden');
+        }
+        
+        showToast(`Incident Resolved: ${data.incident_code}`, 'info');
+    }
+}
+
+
+// --- SIMULATION LOOP (LOCAL FALLBACK) ---
 function startSimulation() {
     if (simulationInterval) clearInterval(simulationInterval);
     
@@ -295,18 +547,22 @@ function updateMapMarkers() {
     mapPoints.forEach(pt => {
         let color = pt.status === 'critical' ? 'red' : (pt.status === 'warning' ? 'orange' : 'green');
         
-        const circle = L.circleMarker([pt.lat, pt.lng], {
+        const circle = L.circleMarker([pt.latitude, pt.longitude], {
             color: color,
             fillColor: color,
             fillOpacity: 0.6,
             radius: pt.status === 'critical' ? 12 : 8
         }).addTo(map);
         
+        const ph = pt.latest_readings ? pt.latest_readings.ph.toFixed(1) : "N/A";
+        const turb = pt.latest_readings ? pt.latest_readings.turbidity.toFixed(1) : "N/A";
+        
         circle.bindPopup(`
             <strong>${pt.name}</strong><br>
+            Facility: ${pt.facility}<br>
             Status: <span style="color:${color}; text-transform:uppercase;">${pt.status}</span><br>
-            Risk Score: ${pt.risk}/100<br>
-            pH: ${pt.ph} | Turbidity: ${pt.turb}
+            Risk Score: ${pt.risk_score}/100<br>
+            pH: ${ph} | Turbidity: ${turb}
         `);
         
         markers.push(circle);
@@ -315,7 +571,19 @@ function updateMapMarkers() {
 
 
 // --- ANOMALY LOGIC ---
-function triggerAnomaly() {
+async function triggerAnomaly() {
+    if (!isOffline) {
+        try {
+            await fetch('http://localhost:8000/api/simulation/trigger-anomaly', { method: 'POST' });
+            showToast('Anomaly triggered on backend server.', 'warning');
+        } catch (e) {
+            console.error(e);
+            showToast('Failed to trigger backend anomaly.', 'critical');
+        }
+        return;
+    }
+
+    // Local Fallback logic
     if (isAnomaly) return; // already active
     
     isAnomaly = true;
@@ -371,13 +639,29 @@ function triggerAnomaly() {
     // Re-render sensor cards for red colors
     renderSensors();
     
-    showToast('Abnormal discharge detected at Plant A.', 'critical');
+    showToast('Abnormal discharge detected locally.', 'critical');
     setTimeout(() => {
         showToast(`Risk score increased to ${riskScore}. System generating incident report.`, 'warning');
     }, 1500);
 }
 
-function resetSimulation() {
+async function resetSimulation() {
+    if (!isOffline) {
+        try {
+            await fetch('http://localhost:8000/api/simulation/stop', { method: 'POST' });
+            await fetch('http://localhost:8000/api/simulation/start', { method: 'POST' });
+            // Let WS updates slowly normalize the data on backend.
+            showToast('Backend simulation reset to normal parameters.', 'info');
+            // We should also fetch latest incidents/dashboard to reflect backend state if they resolved anything.
+            fetchDashboardSummary();
+            fetchMapPoints();
+        } catch(e) {
+            console.error(e);
+        }
+        return;
+    }
+    
+    // Local Fallback logic
     isAnomaly = false;
     currentData = { ...INITIAL_STATE };
     
@@ -413,7 +697,7 @@ function resetSimulation() {
     }
     
     renderSensors();
-    showToast('System reset to normal operational parameters.', 'info');
+    showToast('System reset to normal operational parameters locally.', 'info');
 }
 
 function updateRiskUI(statusText, type) {
@@ -469,21 +753,52 @@ function renderIncidents(filter = 'all') {
     });
 }
 
-function openModal(id) {
+async function openModal(id) {
     const inc = incidents.find(i => i.id === id);
     if (!inc) return;
     
+    // Fetch details from backend
+    let details = null;
+    if (inc.db_id && !isOffline) {
+        try {
+            const res = await fetch(`http://localhost:8000/api/incidents/${inc.db_id}/details`);
+            if (res.ok) {
+                details = await res.json();
+            }
+        } catch(e) { console.error("Details fetch failed", e); }
+    }
+    
     const modalBody = document.getElementById('modal-body');
+    let actionsHtml = "";
+    let sensorHtml = "";
+    
+    if (details) {
+        actionsHtml = "<ul>" + details.recommended_actions.map(a => `<li>${a}</li>`).join("") + "</ul>";
+        if (details.recent_readings && details.recent_readings.length > 0) {
+            const r = details.recent_readings[0];
+            sensorHtml = `pH: ${r.ph.toFixed(1)} | Turbidity: ${r.turbidity.toFixed(1)} NTU | TDS: ${r.tds.toFixed(1)} mg/L`;
+        } else {
+            sensorHtml = "No recent data available.";
+        }
+    } else {
+        actionsHtml = "<p>Verify sensor readings.</p>";
+        sensorHtml = `Turbidity: ${isAnomaly ? '55.2 NTU (High)' : '14.1 NTU (Normal)'} | TDS: ${isAnomaly ? '890 mg/L (High)' : '420 mg/L (Normal)'}`;
+    }
+
     modalBody.innerHTML = `
         <div class="detail-row"><span><strong>Incident ID:</strong></span> <span>${inc.id}</span></div>
-        <div class="detail-row"><span><strong>Facility:</strong></span> <span>${inc.facility}</span></div>
+        <div class="detail-row"><span><strong>Facility:</strong></span> <span>${details ? details.facility_name : inc.facility}</span></div>
         <div class="detail-row"><span><strong>Time Detected:</strong></span> <span>${inc.time}</span></div>
         <div class="detail-row"><span><strong>Detected Anomaly:</strong></span> <span>${inc.issue}</span></div>
         <div class="detail-row"><span><strong>Risk Level:</strong></span> <span>${inc.risk}</span></div>
         <div class="detail-row"><span><strong>Status:</strong></span> <span>${inc.status}</span></div>
         <div style="margin-top: 1rem;">
             <h4>Sensor Snapshot</h4>
-            <p style="font-size: 0.9rem; color: #666;">Turbidity: ${isAnomaly ? '55.2 NTU (High)' : '14.1 NTU (Normal)'} | TDS: ${isAnomaly ? '890 mg/L (High)' : '420 mg/L (Normal)'}</p>
+            <p style="font-size: 0.9rem; color: #666;">${sensorHtml}</p>
+        </div>
+        <div style="margin-top: 1rem;">
+            <h4>Recommended Actions</h4>
+            ${actionsHtml}
         </div>
     `;
     
@@ -495,55 +810,77 @@ function closeModal() {
 }
 
 // --- REPORTS ---
-function renderReports() {
+function renderReports(dbReports = []) {
     reportsContainer.innerHTML = '';
     
-    // Just display the first 3 incidents as reports
-    incidents.slice(0, 3).forEach(inc => {
+    if (dbReports.length === 0) {
+        reportsContainer.innerHTML = '<p>No reports generated yet.</p>';
+        return;
+    }
+    
+    dbReports.slice(0, 6).forEach(rep => {
         const div = document.createElement('div');
         div.className = 'report-card card';
-        
-        let riskBadge = 'badge-safe';
-        if (inc.risk === 'Medium') riskBadge = 'badge-warning';
-        if (inc.risk === 'High' || inc.risk === 'Critical') riskBadge = 'badge-critical';
         
         div.innerHTML = `
             <div class="report-icon"><i class="fa-solid fa-file-lines"></i></div>
             <div class="report-info">
-                <h4>Incident Report #${inc.id}</h4>
-                <p>Generated: ${new Date().toLocaleDateString()}</p>
-                <p>Facility: ${inc.facility} | Risk: <span class="badge ${riskBadge}">${inc.risk}</span> | Status: ${inc.status}</p>
+                <h4>Report ID: #${rep.id}</h4>
+                <p>Generated: ${new Date(rep.generated_at).toLocaleString()}</p>
+                <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">Incident DB ID: ${rep.incident_id}</p>
+            </div>
+            <div style="margin-left: auto;">
+                <button class="btn btn-secondary btn-sm" onclick="printBackendReport(${rep.id})"><i class="fa-solid fa-print"></i></button>
             </div>
         `;
         reportsContainer.appendChild(div);
     });
 }
 
-function generatePrintableReport() {
-    const inc = incidents[0]; // Just use the most recent
+async function printBackendReport(reportId) {
+    if (isOffline) {
+        showToast("Backend offline. Cannot fetch report.", "warning");
+        return;
+    }
+    try {
+        const res = await fetch(`http://localhost:8000/api/reports/${reportId}`);
+        if (res.ok) {
+            const rep = await res.json();
+            document.getElementById('print-date').innerText = new Date(rep.generated_at).toLocaleString();
+            document.getElementById('print-content').innerHTML = `<pre style="white-space: pre-wrap; font-family: 'Inter', sans-serif;">${rep.report_content}</pre>`;
+            window.print();
+        }
+    } catch(e) {
+        console.error(e);
+        showToast("Failed to fetch report details.", "warning");
+    }
+}
+
+async function generatePrintableReport() {
+    if (isOffline) {
+        showToast("Backend unavailable. Cannot generate official report.", "warning");
+        return;
+    }
     
-    document.getElementById('print-date').innerText = new Date().toLocaleString();
-    document.getElementById('print-content').innerHTML = `
-        <h3>Details for ${inc.id}</h3>
-        <p><strong>Facility:</strong> ${inc.facility}</p>
-        <p><strong>Location:</strong> ${inc.location}</p>
-        <p><strong>Time:</strong> ${inc.time}</p>
-        <p><strong>Issue:</strong> ${inc.issue}</p>
-        <p><strong>Risk Level:</strong> ${inc.risk}</p>
-        
-        <h4 style="margin-top: 20px;">Sensor Snapshot</h4>
-        <ul>
-            <li>pH: ${currentData.ph.toFixed(1)}</li>
-            <li>Turbidity: ${currentData.turbidity.toFixed(1)} NTU</li>
-            <li>TDS: ${currentData.tds.toFixed(1)} mg/L</li>
-            <li>Flow: ${currentData.flow.toFixed(1)} L/min</li>
-        </ul>
-        
-        <h4 style="margin-top: 20px;">Recommended Action</h4>
-        <p>Immediate inspection required at discharge point. Verify sensor calibration.</p>
-    `;
+    // Pick the first active incident
+    const active = incidents.find(i => i.status !== 'Resolved' && i.db_id);
+    if (!active) {
+        showToast("No active incidents to report on.", "info");
+        return;
+    }
     
-    window.print();
+    try {
+        const res = await fetch(`http://localhost:8000/api/reports/${active.db_id}`, { method: 'POST' });
+        if (res.ok) {
+            showToast("Report successfully generated.", "info");
+            fetchReports(); // Refresh the report list
+        } else {
+            showToast("Failed to generate report.", "warning");
+        }
+    } catch(e) {
+        console.error(e);
+        showToast("Network error while generating report.", "warning");
+    }
 }
 
 // --- ALERTS / TOASTS ---
