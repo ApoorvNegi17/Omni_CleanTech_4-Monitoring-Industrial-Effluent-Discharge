@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AquaSentinel - Real-Time Effluent Monitoring</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Alert Container -->
+    <div id="alert-container" class="alert-container"></div>
+
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo">
+                <i class="fa-solid fa-water"></i>
+                <span>AquaSentinel</span>
+            </div>
+            <div class="hamburger" id="hamburger">
+                <i class="fa-solid fa-bars"></i>
+            </div>
+            <ul class="nav-links" id="nav-links">
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#monitoring">Monitoring</a></li>
+                <li><a href="#map-section">Source Map</a></li>
+                <li><a href="#incidents">Incidents</a></li>
+                <li><a href="#reports">Reports</a></li>
+                <li><a href="#about">About</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" id="overview">
+        <div class="container hero-content">
+            <div class="system-status badge-safe" id="hero-system-status">
+                <i class="fa-solid fa-check-circle"></i> SYSTEM OPERATIONAL
+            </div>
+            <h1>Real-Time Industrial Effluent Monitoring</h1>
+            <p>Detect abnormal discharge early. Understand pollution patterns. Protect downstream water bodies.</p>
+            <div class="hero-buttons">
+                <a href="#monitoring" class="btn btn-primary">Open Monitoring Dashboard</a>
+                <a href="#incidents" class="btn btn-secondary">View Active Incidents</a>
+            </div>
+            <div class="hero-visual">
+                Industrial Facility <i class="fa-solid fa-arrow-right"></i> Sensors <i class="fa-solid fa-arrow-right"></i> Analysis <i class="fa-solid fa-arrow-right"></i> Alert <i class="fa-solid fa-arrow-right"></i> Water Body
+            </div>
+        </div>
+    </section>
+
+    <!-- Overview Dashboard -->
+    <section class="overview-dashboard bg-light">
+        <div class="container">
+            <div class="dashboard-grid">
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-location-dot"></i></div>
+                    <div class="stat-content">
+                        <h3>Monitoring Points</h3>
+                        <p class="stat-value">08</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon text-red"><i class="fa-solid fa-bell"></i></div>
+                    <div class="stat-content">
+                        <h3>Active Alerts</h3>
+                        <p class="stat-value" id="active-alerts-count">0</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon text-green"><i class="fa-solid fa-industry"></i></div>
+                    <div class="stat-content">
+                        <h3>Safe Facilities</h3>
+                        <p class="stat-value" id="safe-facilities-count">05</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon text-orange"><i class="fa-solid fa-shield-halved"></i></div>
+                    <div class="stat-content">
+                        <h3>Overall Risk</h3>
+                        <p class="stat-value"><span id="overall-risk-val">32</span> / 100</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                    <div class="stat-content">
+                        <h3>Last Data Update</h3>
+                        <p class="stat-value text-sm" id="last-update-time">Just now</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Monitoring Panel & Chart & Risk -->
+    <section class="monitoring-section" id="monitoring">
+        <div class="container">
+            <div class="section-header">
+                <h2>Real-Time Sensor Monitoring</h2>
+                <div class="controls">
+                    <button class="btn btn-danger" id="simulate-anomaly-btn"><i class="fa-solid fa-bolt"></i> Simulate Anomaly</button>
+                    <button class="btn btn-secondary" id="reset-sim-btn"><i class="fa-solid fa-rotate-right"></i> Reset Simulation</button>
+                </div>
+            </div>
+
+            <!-- Sensor Cards -->
+            <div class="sensor-grid" id="sensor-cards">
+                <!-- Populated by JS -->
+            </div>
+
+            <div class="monitoring-layout">
+                <!-- Chart -->
+                <div class="chart-panel card">
+                    <div class="card-header">
+                        <h3>Sensor History</h3>
+                        <select id="chart-sensor-select" class="form-select">
+                            <option value="ph">pH</option>
+                            <option value="turbidity">Turbidity (NTU)</option>
+                            <option value="temperature">Temperature (°C)</option>
+                            <option value="tds">TDS (mg/L)</option>
+                            <option value="flow">Flow Rate (L/min)</option>
+                        </select>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="sensorChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Risk Assessment & AI -->
+                <div class="analysis-panel">
+                    <div class="card risk-card" id="risk-assessment-card">
+                        <div class="card-header">
+                            <h3>Risk Assessment</h3>
+                            <span class="badge badge-safe" id="risk-status-badge">LOW RISK</span>
+                        </div>
+                        <div class="risk-score-display">
+                            <div class="score"><span id="risk-score">32</span><span class="total">/100</span></div>
+                            <div class="progress-bar">
+                                <div class="progress-fill safe-bg" id="risk-progress" style="width: 32%;"></div>
+                            </div>
+                        </div>
+                        <ul class="risk-factors">
+                            <li><i class="fa-solid fa-check text-green" id="rf-sensor"></i> Sensor deviation</li>
+                            <li><i class="fa-solid fa-check text-green" id="rf-turbidity"></i> Turbidity status</li>
+                            <li><i class="fa-solid fa-check text-green" id="rf-conductivity"></i> Conductivity status</li>
+                            <li><i class="fa-solid fa-check text-green" id="rf-flow"></i> Flow anomaly</li>
+                            <li><i class="fa-solid fa-check text-green" id="rf-history"></i> Historical behaviour</li>
+                        </ul>
+                    </div>
+
+                    <div class="card ai-card">
+                        <div class="card-header">
+                            <h3>AI Anomaly Detection</h3>
+                            <i class="fa-solid fa-microchip text-primary"></i>
+                        </div>
+                        <div class="ai-details">
+                            <div class="detail-item">
+                                <span class="label">Current Facility Behaviour:</span>
+                                <span class="value text-green" id="ai-behaviour">NORMAL</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Pollution Fingerprint:</span>
+                                <span class="value" id="ai-fingerprint">No significant deviation detected</span>
+                            </div>
+                            <div class="detail-item">
+                                <span class="label">Detection Confidence:</span>
+                                <span class="value" id="ai-confidence">94%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Map Section -->
+    <section class="map-section bg-light" id="map-section">
+        <div class="container">
+            <h2>Source-to-Impact Map</h2>
+            <p>Visualizing facility discharge points and downstream monitoring stations.</p>
+            <div class="map-container card" id="map">
+                <!-- Leaflet Map -->
+            </div>
+        </div>
+    </section>
+
+    <!-- Incidents Section -->
+    <section class="incidents-section" id="incidents">
+        <div class="container">
+            <div class="section-header">
+                <h2>Active Incidents</h2>
+                <div class="filters">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="critical">Critical</button>
+                    <button class="filter-btn" data-filter="high">High</button>
+                    <button class="filter-btn" data-filter="medium">Medium</button>
+                    <button class="filter-btn" data-filter="resolved">Resolved</button>
+                </div>
+            </div>
+            
+            <div class="table-responsive card">
+                <table class="incident-table">
+                    <thead>
+                        <tr>
+                            <th>Incident ID</th>
+                            <th>Facility</th>
+                            <th>Location</th>
+                            <th>Time</th>
+                            <th>Issue</th>
+                            <th>Risk</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="incidents-tbody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Recommended Action Panel (Hidden by default) -->
+            <div class="card recommended-action-panel hidden" id="recommended-actions">
+                <div class="card-header bg-red text-white">
+                    <h3><i class="fa-solid fa-triangle-exclamation"></i> Critical Recommended Actions</h3>
+                </div>
+                <div class="card-body">
+                    <ul>
+                        <li>Verify sensor readings remotely.</li>
+                        <li>Dispatch inspection team to discharge point.</li>
+                        <li>Notify local environmental control authority immediately.</li>
+                        <li>Monitor downstream community points closely.</li>
+                        <li>Generate and file an official incident report.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Reports Section -->
+    <section class="reports-section bg-light" id="reports">
+        <div class="container">
+            <div class="section-header">
+                <h2>Incident Reports</h2>
+                <button class="btn btn-primary" id="generate-report-btn"><i class="fa-solid fa-file-pdf"></i> Generate Report</button>
+            </div>
+            <div class="reports-grid" id="reports-container">
+                <!-- Populated by JS -->
+                <div class="report-card card">
+                    <div class="report-icon"><i class="fa-solid fa-file-lines"></i></div>
+                    <div class="report-info">
+                        <h4>Incident Report #INC-002</h4>
+                        <p>Generated: 21 Aug 2026</p>
+                        <p>Facility: Plant B | Risk: <span class="badge badge-warning">Medium</span> | Status: Investigating</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Impact & Workflow -->
+    <section class="info-section">
+        <div class="container">
+            <h2>Impact</h2>
+            <div class="impact-grid">
+                <div class="impact-card">
+                    <i class="fa-solid fa-industry"></i>
+                    <h4>Industries</h4>
+                    <p>Compliance management and early operational warnings.</p>
+                </div>
+                <div class="impact-card">
+                    <i class="fa-solid fa-building-shield"></i>
+                    <h4>Authorities</h4>
+                    <p>Faster alerts and timestamped evidentiary data.</p>
+                </div>
+                <div class="impact-card">
+                    <i class="fa-solid fa-water"></i>
+                    <h4>Resource Managers</h4>
+                    <p>Continuous water-quality monitoring datasets.</p>
+                </div>
+                <div class="impact-card">
+                    <i class="fa-solid fa-people-group"></i>
+                    <h4>Communities</h4>
+                    <p>Protection from downstream pollution propagation.</p>
+                </div>
+                <div class="impact-card">
+                    <i class="fa-solid fa-fish-fins"></i>
+                    <h4>Ecosystems</h4>
+                    <p>Preservation of aquatic life through early detection.</p>
+                </div>
+            </div>
+
+            <h2 style="margin-top: 4rem;">How It Works</h2>
+            <div class="workflow-container">
+                <div class="workflow-step">Sensor Data</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step">Facility Behaviour</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step">Anomaly Detection</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step">Pollution Fingerprint</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step highlight">Risk Assessment</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step">Source-to-Impact</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step highlight">Incident Detection</div>
+                <i class="fa-solid fa-arrow-right workflow-arrow"></i>
+                <div class="workflow-step">Actionable Report</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Section -->
+    <section class="tech-section bg-light" id="about">
+        <div class="container">
+            <h2>Proposed Architecture (Concept)</h2>
+            <p>This dashboard is a lightweight MVP representing the following proposed technology stack.</p>
+            <div class="tech-grid">
+                <div class="tech-card card">
+                    <h4>Frontend</h4>
+                    <p>React.js / Dashboard concept</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>Backend</h4>
+                    <p>Python / FastAPI</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>AI/ML</h4>
+                    <p>Scikit-learn</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>Data Processing</h4>
+                    <p>Pandas / NumPy</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>Database</h4>
+                    <p>PostgreSQL / TimescaleDB</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>Real-Time</h4>
+                    <p>MQTT / WebSockets</p>
+                </div>
+                <div class="tech-card card">
+                    <h4>Hardware</h4>
+                    <p>ESP32 + Sensors</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container footer-content">
+            <div class="footer-brand">
+                <div class="logo">
+                    <i class="fa-solid fa-water"></i>
+                    <span>AquaSentinel</span>
+                </div>
+                <p>"Real-time intelligence for cleaner water."</p>
+            </div>
+            <div class="footer-links">
+                <a href="#overview">Overview</a>
+                <a href="#monitoring">Monitoring</a>
+                <a href="#incidents">Incidents</a>
+                <a href="#reports">Reports</a>
+                <a href="#about">About</a>
+            </div>
+            <div class="footer-meta">
+                <p>Hackathon Prototype</p>
+                <p>&copy; 2026 AquaSentinel</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Incident Modal -->
+    <div class="modal" id="incident-modal">
+        <div class="modal-content card">
+            <div class="modal-header">
+                <h3 id="modal-title">Incident Details</h3>
+                <span class="close-btn" id="modal-close">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Populated by JS -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="modal-close-btn">Close</button>
+                <button class="btn btn-primary" onclick="window.print()">Print Details</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Printable Report Template (Hidden, formatted via CSS media print) -->
+    <div class="print-report-template" id="print-report-template" style="display:none;">
+        <h1>AquaSentinel Official Incident Report</h1>
+        <hr>
+        <div id="print-content"></div>
+        <hr>
+        <p>Generated by AquaSentinel Early-Warning Platform</p>
+        <p>Date: <span id="print-date"></span></p>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
