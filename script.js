@@ -20,6 +20,9 @@ let ws = null;
 let isOffline = true;
 let reconnectTimeout = null;
 
+// Determine if we are deployed (not on localhost)
+const isDeployed = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
 // Chart History Data
 const MAX_HISTORY = 20;
 let chartHistory = {
@@ -74,11 +77,17 @@ document.addEventListener('DOMContentLoaded', () => {
     initSensors();
     initChart();
     initMap();
-    fetchDashboardSummary();
-    fetchMapPoints();
-    fetchIncidents();
-    fetchReports();
-    initWebSocket(); // Try to connect WebSocket
+    
+    if (!isDeployed) {
+        fetchDashboardSummary();
+        fetchMapPoints();
+        fetchIncidents();
+        fetchReports();
+        initWebSocket(); // Try to connect WebSocket
+    } else {
+        // Run in demo mode directly without spamming localhost connection errors
+        handleDisconnect();
+    }
     
     // Event Listeners
     document.getElementById('simulate-anomaly-btn').addEventListener('click', triggerAnomaly);
@@ -293,7 +302,10 @@ function initWebSocket() {
     };
 
     ws.onerror = (err) => {
-        console.error("WebSocket error:", err);
+        // Suppress console error if we are deliberately offline or deployed
+        if (!isDeployed) {
+            console.error("WebSocket error:", err);
+        }
         handleDisconnect();
     };
 }
